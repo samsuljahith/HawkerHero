@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { BusinessProfile } from "@/lib/profiles";
-import { useAnalysisStore, HistoryEntry } from "@/lib/analysisStore";
+import { useAnalysisStore, Campaign } from "@/lib/analysisStore";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
 import EmptyState from "@/components/ui/EmptyState";
 
 interface HistoryProps {
@@ -12,160 +13,151 @@ interface HistoryProps {
 }
 
 export default function History({ profile }: HistoryProps) {
-  const { getHistory } = useAnalysisStore();
-  const entries = getHistory(profile.id);
+  const { getCampaigns, setActiveCampaignId, deleteCampaign } = useAnalysisStore();
+  const campaigns = getCampaigns(profile.id);
   const [expanded, setExpanded] = useState<string | null>(null);
-
-  const typeIcon = (type: string) => {
-    switch (type) {
-      case "analysis": return "🧠";
-      case "generation": return "🎨";
-      case "campaign": return "📣";
-      case "recommendation": return "📅";
-      default: return "📝";
-    }
-  };
-
-  const typeLabel = (type: string) => {
-    switch (type) {
-      case "analysis": return "Market Analysis";
-      case "generation": return "Content Generated";
-      case "campaign": return "Campaign";
-      case "recommendation": return "Recommendation";
-      default: return "Activity";
-    }
-  };
 
   const formatDate = (ts: number) => {
     const d = new Date(ts);
-    const now = new Date();
-    const diff = now.getTime() - d.getTime();
-    if (diff < 60000) return "Just now";
-    if (diff < 3600000) return `${Math.floor(diff / 60000)} min ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)} hours ago`;
     return d.toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
   };
 
-  const toggleExpand = (id: string) => {
-    setExpanded(expanded === id ? null : id);
+  const timeAgo = (ts: number) => {
+    const diff = Date.now() - ts;
+    if (diff < 60000) return "Just now";
+    if (diff < 3600000) return `${Math.floor(diff / 60000)} min ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return `${Math.floor(diff / 86400000)}d ago`;
+  };
+
+  const handleOpenCampaign = (c: Campaign) => {
+    setActiveCampaignId(c.id);
+    // Navigate to studio — handled by parent
+  };
+
+  const handleDelete = (campaignId: string) => {
+    if (confirm("Delete this campaign? This cannot be undone.")) {
+      deleteCampaign(profile.id, campaignId);
+    }
   };
 
   return (
     <div className="space-y-6 animate-fadeIn">
       <div>
-        <h2 className="text-2xl font-bold text-[#1A1410] tracking-tight">History</h2>
+        <h2 className="text-2xl font-bold text-[#1A1410] tracking-tight">Campaign History</h2>
         <p className="text-[#6B6B6B] text-sm mt-1">
-          All your past work for {profile.name} — saved automatically, always available.
+          All campaigns for {profile.name}. Every image, video, and caption is permanently saved here.
         </p>
       </div>
 
-      {entries.length > 0 && (
+      {campaigns.length > 0 && (
         <Card padding="sm">
           <div className="flex items-center gap-2">
-            <Badge variant="success">✓ {entries.length} items saved</Badge>
-            <span className="text-xs text-[#6B6B6B]">Everything is automatically saved and will not disappear.</span>
+            <Badge variant="success">✓ {campaigns.length} campaign{campaigns.length > 1 ? "s" : ""} saved</Badge>
+            <span className="text-xs text-[#6B6B6B]">All content is permanently stored and will never disappear.</span>
           </div>
         </Card>
       )}
 
-      {entries.length === 0 && (
+      {campaigns.length === 0 && (
         <EmptyState
-          icon="🕐"
-          title="No history yet"
-          description="When you run Market Analysis or generate content in the Studio, everything is automatically saved here. You'll never lose your work."
+          icon="📣"
+          title="No campaigns yet"
+          description="Create your first campaign in the Content Studio. Every campaign you create will be permanently saved here with all its assets."
         />
       )}
 
-      {entries.length > 0 && (
-        <div className="space-y-3">
-          {entries.map((entry) => (
-            <Card key={entry.id} padding="sm">
-              <div
-                className="cursor-pointer"
-                onClick={() => toggleExpand(entry.id)}
-              >
-                <div className="flex items-start gap-3">
-                  <span className="text-xl mt-0.5">{typeIcon(entry.type)}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-sm font-semibold text-[#1A1410]">{typeLabel(entry.type)}</span>
-                      <span className="text-xs text-[#6B6B6B]">{formatDate(entry.timestamp)}</span>
-                    </div>
-                    <p className="text-xs text-[#6B6B6B]">{entry.summary}</p>
-                  </div>
-                  <span className={`text-xs text-[#6B6B6B] transition-transform ${expanded === entry.id ? "rotate-180" : ""}`}>▼</span>
-                </div>
+      {/* Campaign List */}
+      {campaigns.map((c) => (
+        <Card key={c.id}>
+          {/* Campaign Header */}
+          <div className="flex items-start justify-between gap-3 cursor-pointer" onClick={() => setExpanded(expanded === c.id ? null : c.id)}>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <h3 className="text-base font-semibold text-[#1A1410] truncate">{c.name}</h3>
+                <Badge variant={c.videoUrl ? "success" : c.captions ? "info" : "default"}>
+                  {c.videoUrl ? "Complete" : c.captions ? "Content Ready" : "In Progress"}
+                </Badge>
               </div>
+              <p className="text-xs text-[#6B6B6B]">
+                Promoting: <span className="font-medium text-[#1A1410]">{c.product}</span> · {timeAgo(c.createdAt)}
+              </p>
+              {/* Asset indicators */}
+              <div className="flex gap-2 mt-2">
+                {c.captions && <span className="text-xs bg-[#FAF8F5] border border-[#ECE6DF] px-2 py-0.5 rounded">✍️ Captions</span>}
+                {c.posterImageUrl && <span className="text-xs bg-[#FAF8F5] border border-[#ECE6DF] px-2 py-0.5 rounded">🎨 Poster</span>}
+                {c.videoUrl && <span className="text-xs bg-[#FAF8F5] border border-[#ECE6DF] px-2 py-0.5 rounded">🎬 Video</span>}
+              </div>
+            </div>
+            <span className={`text-xs text-[#6B6B6B] transition-transform ${expanded === c.id ? "rotate-180" : ""}`}>▼</span>
+          </div>
 
-              {/* Expanded Content */}
-              {expanded === entry.id && (
-                <div className="mt-4 pt-3 border-t border-[#ECE6DF] space-y-3 animate-fadeIn">
-                  {/* Input */}
-                  {entry.input && (
-                    <div>
-                      <p className="text-xs font-medium text-[#6B6B6B] uppercase mb-1">Prompt</p>
-                      <p className="text-sm text-[#1A1410] bg-[#FAF8F5] p-2 rounded-lg">{entry.input}</p>
-                    </div>
-                  )}
-
-                  {/* Captions */}
-                  {entry.captions && (
-                    <div>
-                      <p className="text-xs font-medium text-[#6B6B6B] uppercase mb-1">Caption (English)</p>
-                      <p className="text-sm text-[#1A1410] bg-[#FAF8F5] p-3 rounded-lg whitespace-pre-wrap">{entry.captions.english}</p>
-                      {entry.captions.hashtags && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {entry.captions.hashtags.slice(0, 5).map((t: string, i: number) => (
-                            <span key={i} className="text-xs text-[#2563EB]">{t.startsWith("#") ? t : `#${t}`}</span>
-                          ))}
+          {/* Expanded: Full Campaign Details */}
+          {expanded === c.id && (
+            <div className="mt-4 pt-4 border-t border-[#ECE6DF] space-y-4 animate-fadeIn">
+              {/* Timeline */}
+              {c.activities.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-[#6B6B6B] uppercase mb-2">Campaign Timeline</p>
+                  <div className="space-y-1.5">
+                    {c.activities.map((act) => (
+                      <div key={act.id} className="flex items-start gap-2.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#F2541B] mt-1.5 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium text-[#1A1410]">{act.label}</span>
+                            <span className="text-[10px] text-[#6B6B6B]">{formatDate(act.timestamp)}</span>
+                          </div>
+                          <p className="text-xs text-[#6B6B6B] truncate">{act.summary}</p>
                         </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Poster */}
-                  {entry.posterImageUrl && (
-                    <div>
-                      <p className="text-xs font-medium text-[#6B6B6B] uppercase mb-1">Poster Image</p>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={entry.posterImageUrl} alt="Generated poster" className="w-full max-w-[300px] rounded-lg border border-[#ECE6DF]" />
-                    </div>
-                  )}
-
-                  {/* Video */}
-                  {entry.videoUrl && (
-                    <div>
-                      <p className="text-xs font-medium text-[#6B6B6B] uppercase mb-1">Video</p>
-                      <video src={entry.videoUrl} controls muted className="w-full max-w-[200px] rounded-lg border border-[#ECE6DF] aspect-[9/16]" />
-                    </div>
-                  )}
-
-                  {/* Review */}
-                  {entry.review && (
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-[#6B6B6B]">Quality: </p>
-                      <Badge variant={entry.review.score >= 8 ? "success" : "warning"}>{entry.review.score}/10</Badge>
-                      <span className="text-xs text-[#6B6B6B]">{entry.review.feedback}</span>
-                    </div>
-                  )}
-
-                  {/* Content Plan */}
-                  {entry.contentPlan && entry.contentPlan.length > 0 && (
-                    <div>
-                      <p className="text-xs font-medium text-[#6B6B6B] uppercase mb-1">Content Plan ({entry.contentPlan.length} ideas)</p>
-                      <div className="space-y-1">
-                        {entry.contentPlan.slice(0, 3).map((item: any, i: number) => (
-                          <p key={i} className="text-xs text-[#1A1410] bg-[#FAF8F5] p-2 rounded">• {item.idea} ({item.platform})</p>
-                        ))}
                       </div>
-                    </div>
-                  )}
+                    ))}
+                  </div>
                 </div>
               )}
-            </Card>
-          ))}
-        </div>
-      )}
+
+              {/* Saved Captions */}
+              {c.captions && (
+                <div>
+                  <p className="text-xs font-medium text-[#6B6B6B] uppercase mb-1">Caption (English)</p>
+                  <p className="text-sm text-[#1A1410] bg-[#FAF8F5] p-3 rounded-lg whitespace-pre-wrap">{c.captions.english}</p>
+                </div>
+              )}
+
+              {/* Saved Poster */}
+              {c.posterImageUrl && (
+                <div>
+                  <p className="text-xs font-medium text-[#6B6B6B] uppercase mb-1">Poster</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={c.posterImageUrl} alt="Campaign poster" className="w-full max-w-[280px] rounded-lg border border-[#ECE6DF]" />
+                </div>
+              )}
+
+              {/* Saved Video */}
+              {c.videoUrl && (
+                <div>
+                  <p className="text-xs font-medium text-[#6B6B6B] uppercase mb-1">Video</p>
+                  <video src={c.videoUrl} controls muted playsInline className="w-full max-w-[180px] rounded-lg border border-[#ECE6DF] aspect-[9/16]" />
+                  <a href={c.videoUrl} download={`${c.name}-hawkerhero.mp4`} target="_blank" rel="noopener noreferrer"
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-[#F2541B] text-white hover:bg-[#D8430E] transition-colors">
+                    ⬇️ Download Video
+                  </a>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-2 pt-2">
+                <Button variant="secondary" size="sm" onClick={() => handleOpenCampaign(c)}>
+                  Open in Studio
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => handleDelete(c.id)}>
+                  🗑️ Delete
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
+      ))}
     </div>
   );
 }

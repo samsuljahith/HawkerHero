@@ -46,10 +46,11 @@ Business: ${profile.name}
 Type: ${profile.type}
 Description: ${profile.description}
 Products/Services/Menu: ${profile.offerings || "Not provided"}
-Target Audience: ${profile.targetAudience || "General local customers"}
-Brand Personality: ${profile.branding || "Friendly and professional"}
 Location: ${profile.location || "Singapore"}
-${profile.uploadedData ? `\nUploaded Business Data (catalog/menu/services):\n${profile.uploadedData.slice(0, 2000)}` : ""}`;
+Contact: ${profile.contact || "Not provided"}
+${profile.uploadedData ? `\nUploaded Business Data (catalog/menu/services):\n${profile.uploadedData.slice(0, 2000)}` : ""}
+
+IMPORTANT: You must automatically determine the ideal target audience, brand positioning, marketing tone, and content strategy based on the business type, location, products, and market research. Do NOT ask the user for this — figure it out yourself like a professional marketing consultant would.`;
 
     // Retrieve memory
     const priorMemory = await getBusinessMemory(profile.name);

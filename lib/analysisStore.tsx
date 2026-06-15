@@ -12,12 +12,11 @@ export interface AnalysisData {
   videoTaskId?: string | null;
   review?: any;
   sources?: string[];
-  todayContext?: string | null;
   returning?: boolean;
   welcomeBack?: string | null;
   whatsChanged?: string | null;
   contentPlan?: any[] | null;
-  competitors?: any[] | null;
+  analysis?: any; // from /api/analyze
 }
 
 export interface BusinessAnalysisEntry {
@@ -27,45 +26,54 @@ export interface BusinessAnalysisEntry {
   error: string | null;
 }
 
-export interface StudioData {
-  input: string;
-  result: any | null;
-  videoUrl: string | null;
-  wantPoster: boolean;
-  wantVideo: boolean;
+// ─── Campaign Model ──────────────────────────────────────────────────────────
+
+export interface CampaignActivity {
+  id: string;
+  timestamp: number;
+  type: "market_analysis" | "audience_analysis" | "branding" | "content_generation" | "image_generation" | "video_generation" | "recommendation";
+  label: string;
+  summary: string;
+  data?: any; // full generated content
 }
 
-export interface HistoryEntry {
+export interface Campaign {
   id: string;
-  type: "analysis" | "generation" | "campaign" | "recommendation";
-  timestamp: number;
-  summary: string;
-  input?: string;
-  // Full generated data stored alongside the entry
+  businessId: string;
+  name: string;
+  product: string; // what product/service is being promoted
+  goal: string;
+  createdAt: number;
+  activities: CampaignActivity[];
+  // Latest generated assets (quick access)
   captions?: any;
   posterImageUrl?: string | null;
-  videoUrl?: string | null;
   poster?: any;
+  videoUrl?: string | null;
+  videoTaskId?: string | null;
   review?: any;
-  contentPlan?: any[] | null;
-  brief?: any;
 }
 
+// ─── Store Interface ─────────────────────────────────────────────────────────
+
 interface AnalysisStore {
-  // Analysis (per business)
+  // Market Analysis (per business, cached)
   entries: Record<string, BusinessAnalysisEntry>;
   getEntry: (businessId: string) => BusinessAnalysisEntry;
   setAnalysis: (businessId: string, data: AnalysisData) => void;
   setLoading: (businessId: string) => void;
   setError: (businessId: string, error: string) => void;
-  // Studio (per business, current session)
-  studioEntries: Record<string, StudioData>;
-  getStudio: (businessId: string) => StudioData;
-  setStudio: (businessId: string, data: Partial<StudioData>) => void;
-  // History (per business, persisted)
-  getHistory: (businessId: string) => HistoryEntry[];
-  addHistoryEntry: (businessId: string, entry: Omit<HistoryEntry, "id" | "timestamp">) => void;
-  updateLastHistoryVideo: (businessId: string, videoUrl: string) => void;
+
+  // Campaigns (per business)
+  campaigns: Record<string, Campaign[]>; // businessId -> campaigns[]
+  getCampaigns: (businessId: string) => Campaign[];
+  activeCampaignId: string | null;
+  setActiveCampaignId: (id: string | null) => void;
+  getActiveCampaign: (businessId: string) => Campaign | null;
+  createCampaign: (businessId: string, name: string, product: string, goal: string) => Campaign;
+  addCampaignActivity: (businessId: string, campaignId: string, activity: Omit<CampaignActivity, "id" | "timestamp">) => void;
+  updateCampaignAssets: (businessId: string, campaignId: string, assets: Partial<Pick<Campaign, "captions" | "posterImageUrl" | "poster" | "videoUrl" | "videoTaskId" | "review">>) => void;
+  deleteCampaign: (businessId: string, campaignId: string) => void;
 }
 
 const DEFAULT_ENTRY: BusinessAnalysisEntry = {
@@ -75,27 +83,14 @@ const DEFAULT_ENTRY: BusinessAnalysisEntry = {
   error: null,
 };
 
-const DEFAULT_STUDIO: StudioData = {
-  input: "",
-  result: null,
-  videoUrl: null,
-  wantPoster: true,
-  wantVideo: true,
-};
-
-// LocalStorage helpers
+// LocalStorage
 const LS_KEY_ANALYSIS = "hawkerhero_analysis";
-const LS_KEY_STUDIO = "hawkerhero_studio";
-const LS_KEY_HISTORY = "hawkerhero_history";
+const LS_KEY_CAMPAIGNS = "hawkerhero_campaigns";
 
 function loadFromLS<T>(key: string): T | null {
   if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch { return null; }
 }
-
 function saveToLS(key: string, data: any) {
   if (typeof window === "undefined") return;
   try { localStorage.setItem(key, JSON.stringify(data)); } catch {}
@@ -107,118 +102,102 @@ const AnalysisContext = createContext<AnalysisStore | null>(null);
 
 export function AnalysisProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<Record<string, BusinessAnalysisEntry>>(() => loadFromLS(LS_KEY_ANALYSIS) || {});
-  const [studioEntries, setStudioEntries] = useState<Record<string, StudioData>>(() => loadFromLS(LS_KEY_STUDIO) || {});
-  const [historyMap, setHistoryMap] = useState<Record<string, HistoryEntry[]>>(() => loadFromLS(LS_KEY_HISTORY) || {});
+  const [campaigns, setCampaigns] = useState<Record<string, Campaign[]>>(() => loadFromLS(LS_KEY_CAMPAIGNS) || {});
+  const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
 
-  // Persist to localStorage on change
+  // Persist
   useEffect(() => { saveToLS(LS_KEY_ANALYSIS, entries); }, [entries]);
-  useEffect(() => { saveToLS(LS_KEY_STUDIO, studioEntries); }, [studioEntries]);
-  useEffect(() => { saveToLS(LS_KEY_HISTORY, historyMap); }, [historyMap]);
+  useEffect(() => { saveToLS(LS_KEY_CAMPAIGNS, campaigns); }, [campaigns]);
 
-  const getEntry = useCallback(
-    (businessId: string): BusinessAnalysisEntry => entries[businessId] || DEFAULT_ENTRY,
-    [entries]
-  );
+  // Analysis
+  const getEntry = useCallback((businessId: string): BusinessAnalysisEntry => entries[businessId] || DEFAULT_ENTRY, [entries]);
 
   const setAnalysis = useCallback((businessId: string, data: AnalysisData) => {
-    setEntries((prev) => ({
-      ...prev,
-      [businessId]: { analysis: data, status: "done", lastRunAt: Date.now(), error: null },
-    }));
+    setEntries((prev) => ({ ...prev, [businessId]: { analysis: data, status: "done", lastRunAt: Date.now(), error: null } }));
   }, []);
 
   const setLoading = useCallback((businessId: string) => {
-    setEntries((prev) => ({
-      ...prev,
-      [businessId]: { ...DEFAULT_ENTRY, ...prev[businessId], status: "loading", error: null },
-    }));
+    setEntries((prev) => ({ ...prev, [businessId]: { ...DEFAULT_ENTRY, ...prev[businessId], status: "loading", error: null } }));
   }, []);
 
   const setError = useCallback((businessId: string, error: string) => {
-    setEntries((prev) => ({
-      ...prev,
-      [businessId]: { ...DEFAULT_ENTRY, ...prev[businessId], status: "error", error },
-    }));
+    setEntries((prev) => ({ ...prev, [businessId]: { ...DEFAULT_ENTRY, ...prev[businessId], status: "error", error } }));
   }, []);
 
-  const getStudio = useCallback(
-    (businessId: string): StudioData => studioEntries[businessId] || DEFAULT_STUDIO,
-    [studioEntries]
-  );
+  // Campaigns
+  const getCampaigns = useCallback((businessId: string): Campaign[] => {
+    return (campaigns[businessId] || []).sort((a, b) => b.createdAt - a.createdAt);
+  }, [campaigns]);
 
-  const setStudio = useCallback((businessId: string, data: Partial<StudioData>) => {
-    setStudioEntries((prev) => ({
+  const getActiveCampaign = useCallback((businessId: string): Campaign | null => {
+    if (!activeCampaignId) return null;
+    return (campaigns[businessId] || []).find((c) => c.id === activeCampaignId) || null;
+  }, [campaigns, activeCampaignId]);
+
+  const createCampaign = useCallback((businessId: string, name: string, product: string, goal: string): Campaign => {
+    const campaign: Campaign = {
+      id: `campaign-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      businessId,
+      name,
+      product,
+      goal,
+      createdAt: Date.now(),
+      activities: [],
+    };
+    setCampaigns((prev) => ({
       ...prev,
-      [businessId]: { ...(prev[businessId] || DEFAULT_STUDIO), ...data },
+      [businessId]: [campaign, ...(prev[businessId] || [])],
     }));
+    setActiveCampaignId(campaign.id);
+    return campaign;
   }, []);
 
-  // ─── History: single source of truth in localStorage + Mem0 backup ─────────
-
-  const getHistory = useCallback(
-    (businessId: string): HistoryEntry[] => {
-      return (historyMap[businessId] || []).sort((a, b) => b.timestamp - a.timestamp);
-    },
-    [historyMap]
-  );
-
-  const addHistoryEntry = useCallback((businessId: string, entry: Omit<HistoryEntry, "id" | "timestamp">) => {
-    const fullEntry: HistoryEntry = {
-      ...entry,
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  const addCampaignActivity = useCallback((businessId: string, campaignId: string, activity: Omit<CampaignActivity, "id" | "timestamp">) => {
+    const fullActivity: CampaignActivity = {
+      ...activity,
+      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       timestamp: Date.now(),
     };
-
-    // 1. Save to localStorage immediately (synchronous, guaranteed)
-    setHistoryMap((prev) => {
-      const existing = prev[businessId] || [];
-      // Keep last 50 entries per business to avoid localStorage overflow
-      const updated = [fullEntry, ...existing].slice(0, 50);
+    setCampaigns((prev) => {
+      const list = prev[businessId] || [];
+      const updated = list.map((c) =>
+        c.id === campaignId ? { ...c, activities: [...c.activities, fullActivity] } : c
+      );
       return { ...prev, [businessId]: updated };
     });
-
-    // 2. Also save to Mem0 as backup (async, fire-and-forget)
+    // Backup to Mem0
     fetch("/api/history", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        businessId,
-        entry: {
-          type: fullEntry.type,
-          summary: fullEntry.summary,
-          timestamp: fullEntry.timestamp,
-          input: fullEntry.input,
-          // Store essential data refs (not full image URLs to save space)
-          hasCaptions: !!fullEntry.captions,
-          hasPoster: !!fullEntry.posterImageUrl,
-          hasVideo: !!fullEntry.videoUrl,
-        },
-      }),
+      body: JSON.stringify({ businessId, entry: { type: activity.type, summary: activity.summary, timestamp: Date.now(), campaignId } }),
     }).catch(() => {});
   }, []);
 
-  const updateLastHistoryVideo = useCallback((businessId: string, videoUrl: string) => {
-    setHistoryMap((prev) => {
-      const existing = prev[businessId] || [];
-      if (existing.length === 0) return prev;
-      // Update the most recent generation entry
-      const updated = [...existing];
-      const idx = updated.findIndex((e) => e.type === "generation" && !e.videoUrl);
-      if (idx >= 0) {
-        updated[idx] = { ...updated[idx], videoUrl };
-      }
+  const updateCampaignAssets = useCallback((businessId: string, campaignId: string, assets: Partial<Pick<Campaign, "captions" | "posterImageUrl" | "poster" | "videoUrl" | "videoTaskId" | "review">>) => {
+    setCampaigns((prev) => {
+      const list = prev[businessId] || [];
+      const updated = list.map((c) =>
+        c.id === campaignId ? { ...c, ...assets } : c
+      );
       return { ...prev, [businessId]: updated };
     });
   }, []);
 
+  const deleteCampaign = useCallback((businessId: string, campaignId: string) => {
+    setCampaigns((prev) => {
+      const list = prev[businessId] || [];
+      return { ...prev, [businessId]: list.filter((c) => c.id !== campaignId) };
+    });
+    if (activeCampaignId === campaignId) setActiveCampaignId(null);
+  }, [activeCampaignId]);
+
   return (
-    <AnalysisContext.Provider
-      value={{
-        entries, getEntry, setAnalysis, setLoading, setError,
-        studioEntries, getStudio, setStudio,
-        getHistory, addHistoryEntry, updateLastHistoryVideo,
-      }}
-    >
+    <AnalysisContext.Provider value={{
+      entries, getEntry, setAnalysis, setLoading, setError,
+      campaigns, getCampaigns, activeCampaignId, setActiveCampaignId,
+      getActiveCampaign, createCampaign, addCampaignActivity,
+      updateCampaignAssets, deleteCampaign,
+    }}>
       {children}
     </AnalysisContext.Provider>
   );

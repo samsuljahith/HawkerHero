@@ -15,7 +15,8 @@ export default function TopBar({ activeProfile, onNewCampaign }: TopBarProps) {
       <div className="flex items-center justify-between px-6 py-3">
         <div className="flex items-center gap-3">
           {/* Mobile logo */}
-          <span className="lg:hidden text-xl font-bold">🦸</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.jpg" alt="HawkerHero" className="lg:hidden w-8 h-8 rounded-lg" />
           {activeProfile && (
             <>
               <h2 className="text-base font-semibold text-[#1A1410] hidden sm:block">{activeProfile.name}</h2>

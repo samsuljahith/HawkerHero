@@ -33,9 +33,13 @@ export default function Sidebar({
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex flex-col w-64 h-screen fixed left-0 top-0 bg-[#1A1410] text-white z-40">
         {/* Logo */}
-        <div className="px-5 pt-6 pb-4">
-          <h1 className="text-xl font-bold tracking-tight">🦸 HawkerHero</h1>
-          <p className="text-xs text-white/50 mt-0.5">AI Marketing Console</p>
+        <div className="px-5 pt-5 pb-4 flex items-center gap-2.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.jpg" alt="HawkerHero" className="w-9 h-9 rounded-lg" />
+          <div>
+            <h1 className="text-base font-bold tracking-tight">HawkerHero</h1>
+            <p className="text-[10px] text-white/50">AI Marketing Console</p>
+          </div>
         </div>
 
         {/* Business Switcher */}

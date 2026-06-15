@@ -22,7 +22,7 @@ interface MarketAnalysisProps {
 }
 
 export default function MarketAnalysis({ profile }: MarketAnalysisProps) {
-  const { getEntry, setAnalysis, setLoading, setError, addHistoryEntry } = useAnalysisStore();
+  const { getEntry, setAnalysis, setLoading, setError } = useAnalysisStore();
   const entry = getEntry(profile.id);
   const [currentStep, setCurrentStep] = useState(0);
 
@@ -39,12 +39,6 @@ export default function MarketAnalysis({ profile }: MarketAnalysisProps) {
       const data = await res.json();
       if (!res.ok) { setError(profile.id, data.error || "Analysis failed"); return; }
       setAnalysis(profile.id, data);
-      addHistoryEntry(profile.id, {
-        type: "analysis",
-        summary: `Market analysis completed. Score: ${data.analysis?.score?.overall || "?"}/10. Top recommendation: ${data.analysis?.productRecommendations?.[0]?.product || "—"}`,
-        contentPlan: data.analysis?.contentPlan || null,
-        brief: data.analysis?.businessSummary || null,
-      });
     } catch (e: any) {
       setError(profile.id, e.message || "Network error");
     } finally {

@@ -11,7 +11,8 @@ export default function Login({ onContinue }: LoginProps) {
     <div className="min-h-screen bg-[#FAF8F5] flex items-center justify-center p-6">
       <div className="w-full max-w-sm text-center">
         <div className="mb-8">
-          <span className="text-5xl">🦸</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.jpg" alt="HawkerHero" className="w-20 h-20 rounded-2xl mx-auto shadow-md" />
           <h1 className="text-3xl font-bold text-[#1A1410] mt-4 tracking-tight">HawkerHero</h1>
           <p className="text-[#6B6B6B] text-sm mt-2">AI Marketing Intelligence Platform</p>
         </div>
