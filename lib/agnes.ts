@@ -155,11 +155,16 @@ export async function createVideoTask(
         lastError = `Agnes video API ${res.status}: ${errBody}`;
         console.error(`[agnes/video] Attempt ${attempt + 1} failed:`, res.status, errBody);
 
-        // Retry on 5xx (transient provider errors like "division by zero")
+        // Retry on 5xx (transient provider errors)
         if (res.status >= 500 && attempt === 0) {
           console.log("[agnes/video] Retrying once after provider error…");
           await new Promise((r) => setTimeout(r, 2000));
           continue;
+        }
+        // 429 = rate limited — don't retry, just fail gracefully
+        if (res.status === 429) {
+          console.warn("[agnes/video] Rate limited (429). Skipping video generation.");
+          throw new Error("Video temporarily unavailable (server busy). Try again in a few minutes.");
         }
         throw new Error(lastError);
       }
