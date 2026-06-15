@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
 
     // Build profile context string for agent prompts
     const profileContext = profile
-      ? `\nACTIVE BUSINESS PROFILE:\n- Name: ${profile.name}\n- Type: ${profile.type}\n- Description: ${profile.description}\n- Offerings: ${profile.offerings}\n- Location: ${profile.location}\n- Contact: ${profile.contact}\n- Brand Colors: ${(profile.brandColors || []).join(", ")}\nTailor ALL output specifically to this business. ${profile.type === "Restaurant" || profile.type === "Food" ? "Use food/dish-based marketing angles." : `Use ${profile.type.toLowerCase()}-service-based marketing angles.`}\n`
+      ? `\nACTIVE BUSINESS PROFILE:\n- Name: ${profile.name}\n- Type: ${profile.type}\n- Description: ${profile.description}\n- Offerings: ${profile.offerings}\n- Target Audience: ${profile.targetAudience || "general"}\n- Brand Personality: ${profile.branding || "professional and friendly"}\n- Location: ${profile.location}\n- Contact: ${profile.contact}\n- Brand Colors: ${(profile.brandColors || []).join(", ")}${profile.uploadedData ? `\n- Business Data (from uploaded file):\n${profile.uploadedData.slice(0, 1500)}` : ""}\nTailor ALL output specifically to this business. ${profile.type === "Restaurant" || profile.type === "Cafe" ? "Use food/dish-based marketing angles." : `Use ${profile.type.toLowerCase()}-service-based marketing angles.`}\n`
       : "";
 
     const sources: string[] = [];
@@ -163,7 +163,7 @@ Write captions in 4 languages for Instagram/TikTok. Return ONLY valid JSON:
         console.error("[orchestrator] Image failed:", e);
         return null;
       }),
-      createVideoTask(videoPrompt).catch((e) => {
+      createVideoTask(videoPrompt, input.includes("15-second") ? 361 : 241).catch((e) => {
         console.error("[orchestrator] Video task failed:", e);
         return null;
       }),

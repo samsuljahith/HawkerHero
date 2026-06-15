@@ -79,12 +79,8 @@ export default function Sidebar({
           ))}
         </nav>
 
-        {/* Settings */}
-        <div className="px-3 pb-6">
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-[10px] text-sm font-medium text-white/50 hover:text-white/80 hover:bg-white/5 transition-colors">
-            <span>⚙️</span> Settings
-          </button>
-        </div>
+        {/* Bottom spacer */}
+        <div className="pb-6" />
       </aside>
 
       {/* Mobile Bottom Tab Bar */}

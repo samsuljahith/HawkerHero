@@ -1,15 +1,14 @@
 /**
  * GET /api/profiles — list all saved business profiles
  * POST /api/profiles — save a new or updated profile
+ * DELETE /api/profiles?id=... — delete a profile
  *
- * Profiles are stored in Mem0 under user_id "hawkerhero-profiles".
- * Since Mem0 is a memory layer (not a CRUD DB), we store all profiles
- * as a JSON blob in a single memory entry for simplicity.
- * Fallback: returns demo profiles if Mem0 is unavailable.
+ * Profiles stored in Mem0 under user_id "hawkerhero-profiles".
+ * NO demo profiles. Returns empty array if none exist.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { BusinessProfile, DEMO_PROFILES } from "@/lib/profiles";
+import { BusinessProfile } from "@/lib/profiles";
 import MemoryClient from "mem0ai";
 
 const PROFILES_USER_ID = "hawkerhero-profiles-store";
@@ -23,32 +22,34 @@ function getClient(): MemoryClient | null {
 async function loadProfiles(): Promise<BusinessProfile[]> {
   try {
     const mem0 = getClient();
-    if (!mem0) return DEMO_PROFILES;
+    if (!mem0) return [];
 
     const results: any = await mem0.search("business profiles list", {
       user_id: PROFILES_USER_ID,
     });
 
     const items = results?.results || results || [];
-    if (!Array.isArray(items) || items.length === 0) return DEMO_PROFILES;
+    if (!Array.isArray(items) || items.length === 0) return [];
 
-    // Find the most recent memory that contains valid JSON profiles
     for (const item of items) {
       const text = item.memory || item.content || item.text || "";
       if (text.includes('"id"') && text.includes('"name"')) {
         try {
-          const parsed = JSON.parse(text);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          // Try to extract JSON from the text (may be prefixed with label)
+          const jsonStart = text.indexOf("[");
+          const jsonStr = jsonStart >= 0 ? text.slice(jsonStart) : text;
+          const parsed = JSON.parse(jsonStr);
+          if (Array.isArray(parsed)) return parsed;
         } catch {
-          // not valid JSON, skip
+          // not valid, skip
         }
       }
     }
 
-    return DEMO_PROFILES;
+    return [];
   } catch (e) {
     console.error("[profiles] loadProfiles error:", e);
-    return DEMO_PROFILES;
+    return [];
   }
 }
 
@@ -82,6 +83,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Ensure createdAt
+    if (!profile.createdAt) profile.createdAt = Date.now();
+
     const existing = await loadProfiles();
     const idx = existing.findIndex((p) => p.id === profile.id);
     if (idx >= 0) {
@@ -94,6 +98,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ profiles: existing });
   } catch (e: any) {
     console.error("[profiles] POST error:", e);
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const id = req.nextUrl.searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ error: "id required" }, { status: 400 });
+    }
+
+    const existing = await loadProfiles();
+    const filtered = existing.filter((p) => p.id !== id);
+    await persistProfiles(filtered);
+    return NextResponse.json({ profiles: filtered });
+  } catch (e: any) {
+    console.error("[profiles] DELETE error:", e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }

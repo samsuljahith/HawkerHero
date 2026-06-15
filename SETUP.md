@@ -10,7 +10,7 @@ Run these commands in order from the project root (`HawkerHero/` directory).
 npm install
 ```
 
-This installs all dependencies including `html-to-image` (poster PNG export) and `mem0ai` (persistent memory).
+This installs all dependencies including `html-to-image` (poster PNG export), `mem0ai` (persistent memory), and `xlsx` (Excel file parsing for business data upload).
 
 ---
 
@@ -82,9 +82,20 @@ npm run dev
 ## Troubleshooting
 
 - **"AGNES_API_KEY is not set"** — Make sure `.env.local` exists and contains your key. Restart the dev server after changing env vars.
-- **Exa search returns empty** — The pipeline degrades gracefully. Captions/posters still generate without search data.
-- **Video takes a long time** — Video generation is async. The UI polls every 3s for ~90s. If it times out, the rest of the kit still works. The video may still be rendering server-side.
-- **Video not generating at all** — Check that the Agnes video API is responding. The `num_frames` is set to 49 (8×6+1) which is valid. Try a simpler prompt if the API rejects complex ones.
-- **Mem0 memory disabled** — If `MEM0_API_KEY` is not set, memory features (welcome back, profile persistence) are disabled but the app still works.
-- **Business profiles not saving** — Profiles are stored in Mem0. If Mem0 is unavailable, demo profiles still show but new ones won't persist across server restarts.
+- **Exa search returns empty** — The pipeline degrades gracefully. Content still generates without search data.
+- **Video takes a long time** — Video generation is async. The UI polls every 5s for ~4 minutes. Captions and posters are ready immediately.
+- **Video not generating at all** — Check that the Agnes video API is responding. The endpoint is POST /v1/videos. num_frames must be 8n+1 (we use 241 for 10s, 361 for 15s).
+- **Mem0 memory disabled** — If `MEM0_API_KEY` is not set, memory/history features are disabled but the app still works.
+- **Excel upload not parsing** — Make sure the `xlsx` package is installed. Simple spreadsheets parse best.
 - **Type errors on install** — Make sure you're on Node.js 18+ and npm 9+.
+
+## API Routes
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| /api/profiles | GET/POST/DELETE | Business profile CRUD (Mem0-backed) |
+| /api/analyze | POST | Product-aware market analysis |
+| /api/generate | POST | Content generation (captions, poster, video) |
+| /api/video-status | GET | Poll video rendering status |
+| /api/history | GET/POST | Activity history per business |
+| /api/proxy-image | GET | Image proxy for poster download |

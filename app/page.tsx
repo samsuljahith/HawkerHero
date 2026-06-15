@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BusinessProfile, DEMO_PROFILES } from "@/lib/profiles";
+import { BusinessProfile } from "@/lib/profiles";
 import { AnalysisProvider } from "@/lib/analysisStore";
 import Sidebar from "@/components/shell/Sidebar";
 import TopBar from "@/components/shell/TopBar";
@@ -20,27 +20,73 @@ export default function App() {
   const [activeProfile, setActiveProfile] = useState<BusinessProfile | null>(null);
   const [activePage, setActivePage] = useState("dashboard");
   const [showNewProfile, setShowNewProfile] = useState(false);
+  const [loadingProfiles, setLoadingProfiles] = useState(true);
 
-  // Load profiles on mount
+  // Load profiles on auth
   useEffect(() => {
     if (!authenticated) return;
+    setLoadingProfiles(true);
     fetch("/api/profiles")
       .then((r) => r.json())
       .then((d) => {
-        const profs = d.profiles?.length ? d.profiles : DEMO_PROFILES;
+        const profs: BusinessProfile[] = d.profiles || [];
         setProfiles(profs);
-        setActiveProfile(profs[0]);
+        if (profs.length > 0) {
+          setActiveProfile(profs[0]);
+        }
+        // If no profiles, user will see onboarding
       })
       .catch(() => {
-        setProfiles(DEMO_PROFILES);
-        setActiveProfile(DEMO_PROFILES[0]);
-      });
+        setProfiles([]);
+      })
+      .finally(() => setLoadingProfiles(false));
   }, [authenticated]);
 
+  // Login gate
   if (!authenticated) {
     return <Login onContinue={() => setAuthenticated(true)} />;
   }
 
+  // Loading
+  if (loadingProfiles) {
+    return (
+      <div className="min-h-screen bg-[#FAF8F5] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-10 h-10 border-2 border-[#ECE6DF] border-t-[#F2541B] rounded-full animate-spin mx-auto" />
+          <p className="text-sm text-[#6B6B6B] mt-3">Loading your businesses…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // First-time user: show onboarding (create first profile)
+  if (profiles.length === 0 && !showNewProfile) {
+    return (
+      <div className="min-h-screen bg-[#FAF8F5] flex items-center justify-center p-6">
+        <div className="w-full max-w-lg">
+          <ProfileForm
+            isOnboarding={true}
+            onSave={async (profile) => {
+              try {
+                const res = await fetch("/api/profiles", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(profile),
+                });
+                const data = await res.json();
+                if (data.profiles) setProfiles(data.profiles);
+              } catch {
+                setProfiles([profile]);
+              }
+              setActiveProfile(profile);
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // New profile form (from sidebar)
   if (showNewProfile) {
     return (
       <AnalysisProvider>
@@ -76,6 +122,7 @@ export default function App() {
     );
   }
 
+  // No active profile (shouldn't happen, but safety)
   if (!activeProfile) {
     return (
       <div className="min-h-screen bg-[#FAF8F5] flex items-center justify-center">
