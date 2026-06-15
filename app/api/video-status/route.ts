@@ -2,6 +2,9 @@
  * GET /api/video-status?taskId=...
  * Polls Agnes video generation status.
  * Returns { status, videoUrl } — never errors, degrades gracefully.
+ *
+ * Agnes statuses: queued, in_progress, completed, failed
+ * We normalise to: rendering | completed | failed
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -19,13 +22,13 @@ export async function GET(req: NextRequest) {
 
   const result = await getVideoTask(taskId);
 
-  // Normalise: if status is still pending/processing, return "rendering" for the UI
+  // Normalise status for the client
   const status =
     result.status === "completed"
       ? "completed"
       : result.status === "failed"
       ? "failed"
-      : "rendering";
+      : "rendering"; // queued + in_progress both show as "rendering"
 
   return NextResponse.json({ status, videoUrl: result.videoUrl });
 }

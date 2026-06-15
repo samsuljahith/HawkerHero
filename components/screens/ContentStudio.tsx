@@ -67,7 +67,7 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
   const pollVideo = useCallback(async (taskId: string) => {
     setVideoPolling(true); let a = 0;
     const poll = async () => {
-      if (a >= 30) { setVideoPolling(false); return; } a++;
+      if (a >= 48) { setVideoPolling(false); return; } a++; // ~4 min at 5s intervals
       try {
         const r = await fetch(`/api/video-status?taskId=${taskId}`);
         const d = await r.json();
@@ -77,7 +77,7 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
         }
         if (d.status === "failed") { setVideoPolling(false); return; }
       } catch {}
-      setTimeout(poll, 3000);
+      setTimeout(poll, 5000);
     }; poll();
   }, [profile.id, setStudio]);
 
@@ -229,9 +229,17 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
                   <video src={videoUrl} autoPlay muted loop playsInline className="w-full h-full object-cover" />
                 </div>
               ) : videoPolling || result.videoTaskId ? (
-                <div className="flex items-center gap-3 p-4 rounded-[10px] bg-amber-50 border border-amber-200">
-                  <div className="w-4 h-4 border-2 border-amber-400 border-t-amber-700 rounded-full animate-spin" />
-                  <p className="text-amber-700 text-xs font-medium">Rendering video… (1-3 min)</p>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3 p-4 rounded-[10px] bg-amber-50 border border-amber-200">
+                    <div className="w-4 h-4 border-2 border-amber-400 border-t-amber-700 rounded-full animate-spin" />
+                    <p className="text-amber-700 text-xs font-medium">Rendering video… (~1-4 min). Your other assets are ready above.</p>
+                  </div>
+                  <div className="max-w-[240px] mx-auto rounded-[14px] overflow-hidden border border-[#ECE6DF] aspect-[9/16] bg-[#1A1410] flex items-center justify-center">
+                    <div className="text-center p-4">
+                      <span className="text-3xl block mb-2">🎬</span>
+                      <p className="text-white/70 text-xs">Video preview will appear here</p>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <p className="text-xs text-[#6B6B6B]">Video not available for this request.</p>
