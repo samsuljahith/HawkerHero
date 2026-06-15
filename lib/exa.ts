@@ -54,6 +54,7 @@ export async function searchWeb(query: string): Promise<string> {
     // Fallback: exa.search with highlights
     const searchRes = await exa.search(query, {
       type: "auto",
+      numResults: 3,
       contents: { highlights: true },
     } as any);
 

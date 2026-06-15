@@ -16,7 +16,7 @@ function headers(): Record<string, string> {
 
 // ─── TEXT ────────────────────────────────────────────────────────────────────
 
-export async function generateText(prompt: string): Promise<string> {
+export async function generateText(prompt: string, maxTokens: number = 900): Promise<string> {
   try {
     const res = await fetch(`${BASE_URL}/chat/completions`, {
       method: "POST",
@@ -24,6 +24,7 @@ export async function generateText(prompt: string): Promise<string> {
       body: JSON.stringify({
         model: "agnes-2.0-flash",
         messages: [{ role: "user", content: prompt }],
+        max_tokens: maxTokens,
       }),
     });
     if (!res.ok) {

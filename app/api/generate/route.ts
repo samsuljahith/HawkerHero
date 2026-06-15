@@ -1,42 +1,31 @@
 /**
  * POST /api/generate
- * The 6-agent orchestrator — plain TypeScript, no frameworks.
+ * Fast parallelized 6-agent orchestrator.
  *
- * Pipeline order (optimised for speed):
- *   1. Brand Strategist (Exa + Agnes text)
- *   2. Prompt Engineer (Exa + Agnes text) — optimises image/video prompts
- *   3. Video Producer — fires createVideoTask IMMEDIATELY (async, non-blocking)
- *   4. Copywriter (Exa + Agnes text) — runs in parallel with video rendering
- *   5. Art Director (Agnes image)
- *   6. Quality Reviewer (Exa + Agnes text)
+ * Pipeline (optimised for speed):
+ *   Step 0 (if !FAST_MODE): Batch ALL Exa searches in one Promise.all
+ *   Step 1 (await): Combined Strategist + Prompt Engineer in ONE Agnes call
+ *   Step 2 (Promise.all, non-blocking video): Copywriter + Art Director + createVideoTask
+ *   Step 3 (await): Quality Reviewer (quick)
+ *   Return immediately — client polls video separately.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { generateText, generateImage, createVideoTask } from "@/lib/agnes";
 import { searchWeb, getTodayContext } from "@/lib/exa";
+import { getBusinessMemory, saveBusinessMemory } from "@/lib/memory";
 
-export const maxDuration = 120;
+export const maxDuration = 60;
 
-// ─── Caption Frameworks Reference ────────────────────────────────────────────
+const FAST_MODE = process.env.FAST_MODE === "true";
 
-const CAPTION_FRAMEWORKS = `
-You MUST use one or more of these proven caption frameworks. Pick the best fit for the business:
+// ─── Caption Frameworks ──────────────────────────────────────────────────────
 
-1. HVC (Hook–Value–CTA): Grab attention → Provide insight/emotion → Ask for engagement.
-2. AIDA (Attention–Interest–Desire–Action): Open strong → Build curiosity → Spark connection → Direct next move.
-3. PAS (Problem–Agitate–Solution): Identify pain point → Add urgency → Present your offer.
-4. Storytelling (Setup–Conflict–Resolution–CTA): Relatable moment → Obstacle → What changed → Invite engagement.
-5. FAB (Features–Advantages–Benefits): What it is → Why it's better → What's in it for the user.
-6. Before–After–Bridge: Current struggle → Ideal future → How your product connects them.
-7. 4C's (Clear–Concise–Compelling–Credible): Simple, short, engaging, backed by proof.
-8. QUEST (Qualify–Understand–Educate–Stimulate–Transition): Address audience → Acknowledge problem → Provide insight → Make them want → Lead to CTA.
-9. G.R.A.B (Grab–Relate–Amplify–Bridge): Hook → Connect emotionally → Build excitement → CTA.
-10. SLAP (Stop–Look–Act–Purchase): Capture attention → Make interesting → Drive engagement → Guide to conversion.
-11. PPPP (Picture–Promise–Prove–Push): Paint scenario → State gain → Back it up → Call to act.
-12. 4U (Useful–Urgent–Unique–Ultra-Specific): Value + timeliness + fresh angle + concrete detail.
-
-Choose the framework that best suits the product, audience, and platform. State which framework you used.
-`;
+const CAPTION_FRAMEWORKS = `Use one of these proven frameworks (pick the best fit, state which you used):
+1. HVC (Hook–Value–CTA) 2. AIDA (Attention–Interest–Desire–Action) 3. PAS (Problem–Agitate–Solution)
+4. Storytelling (Setup–Conflict–Resolution–CTA) 5. FAB (Features–Advantages–Benefits)
+6. Before–After–Bridge 7. G.R.A.B (Grab–Relate–Amplify–Bridge) 8. SLAP (Stop–Look–Act–Purchase)
+9. 4U (Useful–Urgent–Unique–Ultra-Specific) 10. PPPP (Picture–Promise–Prove–Push)`;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -52,7 +41,7 @@ function safeParseJSON(raw: string): any {
 
 export async function POST(req: NextRequest) {
   try {
-    const { input, todayMode } = await req.json();
+    const { input, todayMode, profile } = await req.json();
     if (!input || typeof input !== "string" || input.trim().length < 5) {
       return NextResponse.json(
         { error: "Please provide a description of your business." },
@@ -60,41 +49,84 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Build profile context string for agent prompts
+    const profileContext = profile
+      ? `\nACTIVE BUSINESS PROFILE:\n- Name: ${profile.name}\n- Type: ${profile.type}\n- Description: ${profile.description}\n- Offerings: ${profile.offerings}\n- Location: ${profile.location}\n- Contact: ${profile.contact}\n- Brand Colors: ${(profile.brandColors || []).join(", ")}\nTailor ALL output specifically to this business. ${profile.type === "Restaurant" || profile.type === "Food" ? "Use food/dish-based marketing angles." : `Use ${profile.type.toLowerCase()}-service-based marketing angles.`}\n`
+      : "";
+
     const sources: string[] = [];
+    const memoryKey = profile?.name || input;
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // TODAY MODE — fetch real-world context
+    // MEMORY: Retrieve prior context for this business
     // ═══════════════════════════════════════════════════════════════════════════
+    const priorMemory = await getBusinessMemory(memoryKey);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STEP 0: Batch all Exa searches upfront (skipped in FAST_MODE)
+    // ═══════════════════════════════════════════════════════════════════════════
+    let trendData = "";
+    let imgTechData = "";
+    let vidTechData = "";
+    let hashtagData = "";
     let todayContext = "";
-    if (todayMode) {
-      todayContext = await getTodayContext();
+
+    if (!FAST_MODE) {
+      const searchPromises = [
+        searchWeb(`what's trending and what makes ${input} popular in Singapore 2026`),
+        searchWeb("best AI image generation prompt techniques for food and product photography 2026"),
+        searchWeb("trending short-form promo video prompt styles for small business 2026"),
+        searchWeb(`trending ${input} hashtags and viral social content angles 2026`),
+        todayMode
+          ? getTodayContext()
+          : Promise.resolve(""),
+      ];
+
+      const [s1, s2, s3, s4, s5] = await Promise.all(searchPromises);
+      trendData = s1;
+      imgTechData = s2;
+      vidTechData = s3;
+      hashtagData = s4;
+      todayContext = s5;
+
+      if (trendData) sources.push(trendData);
+      if (imgTechData) sources.push(imgTechData);
+      if (vidTechData) sources.push(vidTechData);
+      if (hashtagData) sources.push(hashtagData);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // AGENT 1 — Brand Strategist (uses Exa)
+    // STEP 1: Combined Strategist + Prompt Engineer (ONE Agnes call)
     // ═══════════════════════════════════════════════════════════════════════════
-    const trendQuery = `what's trending and what makes ${input} popular in Singapore 2026`;
-    const trendData = await searchWeb(trendQuery);
-    if (trendData) sources.push(trendData);
+    const combinedPrompt = `You are a brand strategist AND award-winning AI prompt engineer for small food/retail businesses in Singapore.
 
-    const strategistPrompt = `You are a brand strategist for small food/retail businesses in Singapore.
 The owner says: "${input}"
-${trendData ? `Live market research data:\n${trendData}\n` : ""}${todayContext ? `Today's real-world context: ${todayContext}\nAdapt your strategy to today's context (e.g. rainy weather -> comfort food angle, hot day -> refreshing/cold angle, holiday eve -> festive angle, weekend -> family outing angle).\n` : ""}
-Analyse and return ONLY valid JSON (no markdown, no explanation) with these keys:
+${profileContext}${priorMemory ? `RETURNING CUSTOMER — prior context from memory:\n${priorMemory}\nSince this is a returning business, also include:\n- "returning": true\n- "welcomeBack": a friendly 1-line greeting referencing what you remember about them\n- "whatsChanged": what's new or different in the market since their last visit (based on live data vs memory)\n` : ""}${trendData ? `Live market research:\n${trendData}\n` : ""}${imgTechData ? `AI image prompt techniques:\n${imgTechData}\n` : ""}${vidTechData ? `Video prompt styles:\n${vidTechData}\n` : ""}${todayContext ? `Today's context: ${todayContext}\nAdapt strategy to today (rainy->comfort food, hot->cold drinks, holiday->festive, weekend->family).\n` : ""}
+
+Return ONLY valid JSON (no markdown, no explanation):
 {
-  "dish": "main product name",
+  "dish": "main product/service name",
   "usp": "unique selling point in one sentence",
-  "price": "price point",
+  "price": "price point or range",
   "vibe": "brand vibe in 2-3 words",
   "audience": "target audience",
-  "posterPrompt": "a detailed image generation prompt for a mouth-watering promotional poster of this product, vibrant food photography style, warm lighting, no text overlay",
-  "videoPrompt": "a detailed 5-second vertical video prompt showing this product being freshly prepared/served, close-up cinematic, steam rising, appetizing"
-}`;
+  "imagePrompt": "professional photography of the product/service, beautiful composition, warm natural lighting, shallow depth of field, appetizing/appealing colors, clean background, NO text, NO watermark, NO letters, NO logos, NO price tags, leave clear negative space at top and bottom for text overlay, ultra high quality, 4K",
+  "videoPrompt": "highly detailed 5-second vertical (9:16) promo video prompt, cinematic close-up, appealing, smooth motion, no text",
+  "contentPlan": [
+    { "idea": "content idea title", "why": "why this works now", "audience": "who it targets", "platform": "Instagram/TikTok/etc", "suggestedCaption": "short caption", "hashtags": ["3-5 hashtags"], "bestPostTime": "e.g. Tue 12pm" }
+  ]${priorMemory ? `,\n  "returning": true,\n  "welcomeBack": "friendly greeting referencing prior context",\n  "whatsChanged": "what changed in the market since last time"` : ""}
+}
+For "contentPlan" include 4-6 upcoming content ideas suited to this business type and current trends.`;
 
-    const briefRaw = await generateText(strategistPrompt);
+    const combinedRaw = await generateText(combinedPrompt, 1200);
     let brief: any;
+    let imagePrompt: string;
+    let videoPrompt: string;
+
     try {
-      brief = safeParseJSON(briefRaw);
+      brief = safeParseJSON(combinedRaw);
+      imagePrompt = brief.imagePrompt || `Professional food photography of ${input}, appetizing, warm lighting, no text, no watermark, no letters, leave space at top and bottom for text overlay`;
+      videoPrompt = brief.videoPrompt || `Cinematic vertical video of ${input} being freshly prepared, steam rising, 5 seconds`;
     } catch {
       brief = {
         dish: input,
@@ -102,89 +134,44 @@ Analyse and return ONLY valid JSON (no markdown, no explanation) with these keys
         price: "$5",
         vibe: "authentic local",
         audience: "locals and tourists",
-        posterPrompt: `Professional food photography of ${input}, vibrant colors, warm lighting, appetizing, promotional poster style`,
-        videoPrompt: `Close-up cinematic vertical video of ${input} being freshly prepared, steam rising, appetizing, 5 seconds`,
       };
+      imagePrompt = `Professional food photography of ${input}, vibrant colors, warm lighting, appetizing, no text, no watermark, no letters, leave clear space at top and bottom for text overlay`;
+      videoPrompt = `Close-up cinematic vertical video of ${input} being freshly prepared, steam rising, appetizing, 5 seconds`;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // AGENT 2 — Prompt Engineer (uses Exa for prompt technique research)
+    // STEP 2: Copywriter + Art Director + Video (all concurrent)
     // ═══════════════════════════════════════════════════════════════════════════
-    let imagePrompt = brief.posterPrompt || `Appetizing promotional poster of ${input}`;
-    let videoPrompt = brief.videoPrompt || `Cinematic vertical video of ${input} being served, appetizing, 5 seconds`;
-
-    try {
-      const [imgTechData, vidTechData] = await Promise.all([
-        searchWeb("best AI image generation prompt techniques for food and product photography 2026"),
-        searchWeb("trending short-form promo video prompt styles for small business 2026"),
-      ]);
-      if (imgTechData) sources.push(imgTechData);
-      if (vidTechData) sources.push(vidTechData);
-
-      const promptEngineerPrompt = `You are an award-winning AI art director and prompt engineer who specializes in mouth-watering food/product photography and scroll-stopping short-form promo video. You write prompts optimized for generative image and video models.
-
-Business brief: ${JSON.stringify(brief)}
-
-${imgTechData ? `Latest AI image prompt techniques research:\n${imgTechData}\n` : ""}
-${vidTechData ? `Latest short-form video prompt styles research:\n${vidTechData}\n` : ""}
-
-Based on the brief and latest techniques, write two highly detailed, optimized prompts:
-- imagePrompt: for generating a stunning promotional poster (food/product photography style, no text overlay, ultra detailed, professional lighting)
-- videoPrompt: for generating a 5-second vertical (9:16) promo video (cinematic, appetizing, close-up, smooth motion)
-
-Return ONLY valid JSON (no markdown, no explanation):
-{
-  "imagePrompt": "your optimized image prompt here",
-  "videoPrompt": "your optimized video prompt here"
-}`;
-
-      const promptEngRaw = await generateText(promptEngineerPrompt);
-      const promptEngResult = safeParseJSON(promptEngRaw);
-      if (promptEngResult.imagePrompt) imagePrompt = promptEngResult.imagePrompt;
-      if (promptEngResult.videoPrompt) videoPrompt = promptEngResult.videoPrompt;
-    } catch (e) {
-      console.error("[orchestrator] Prompt Engineer failed, using brief defaults:", e);
-      // Falls back to brief.posterPrompt / brief.videoPrompt — already set above
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // AGENT 3 — Video Producer (fire IMMEDIATELY, don't block)
-    // ═══════════════════════════════════════════════════════════════════════════
-    let videoTaskId: string | null = null;
-    try {
-      videoTaskId = await createVideoTask(videoPrompt);
-    } catch (e) {
-      console.error("[orchestrator] Video task creation failed:", e);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // AGENT 4 — Copywriter (uses Exa) + Caption Frameworks
-    // Runs while video is rendering in the background
-    // ═══════════════════════════════════════════════════════════════════════════
-    const hashtagQuery = `trending ${brief.dish || input} hashtags and viral social content angles 2026`;
-    const hashtagData = await searchWeb(hashtagQuery);
-    if (hashtagData) sources.push(hashtagData);
-
-    const copywriterPrompt = `You are a social media copywriter specialising in Singapore hawker/small business marketing.
-Business brief: ${JSON.stringify(brief)}
-${hashtagData ? `Trending hashtag & content research:\n${hashtagData}\n` : ""}${todayContext ? `Today's real-world context: ${todayContext}\nAdapt the tone and angle to today (e.g. rainy -> cozy comfort food vibes, hot -> refreshing/cooling angle, holiday -> festive celebration, weekend -> family/friends gathering).\n` : ""}
-
+    const copywriterPrompt = `You are a social media copywriter for Singapore hawker/small business marketing.
+Business: ${JSON.stringify({ dish: brief.dish, usp: brief.usp, price: brief.price, vibe: brief.vibe, audience: brief.audience })}
+${profileContext}${hashtagData ? `Trending research:\n${hashtagData}\n` : ""}${todayContext ? `Today: ${todayContext}. Adapt tone accordingly.\n` : ""}
 ${CAPTION_FRAMEWORKS}
 
-Write promotional captions in 4 languages for Instagram/TikTok using the best caption framework for this business. Return ONLY valid JSON (no markdown):
+Write captions in 4 languages for Instagram/TikTok. Return ONLY valid JSON:
 {
-  "english": "caption using the chosen framework, with emojis and call to action",
-  "chinese": "Chinese caption (Simplified) using same framework",
-  "malay": "Malay caption using same framework",
-  "tamil": "Tamil caption using same framework",
-  "hashtags": ["list", "of", "10", "relevant", "hashtags"],
-  "framework": "name of the framework used (e.g. HVC, AIDA, PAS)"
+  "english": "caption using chosen framework, emojis, CTA",
+  "chinese": "Chinese (Simplified)",
+  "malay": "Malay",
+  "tamil": "Tamil",
+  "hashtags": ["10","relevant","hashtags"],
+  "framework": "framework name used"
 }`;
 
-    const captionsRaw = await generateText(copywriterPrompt);
+    const [captionsRaw, posterImageUrl, videoTaskId] = await Promise.all([
+      generateText(copywriterPrompt, 800).catch(() => ""),
+      generateImage(imagePrompt).catch((e) => {
+        console.error("[orchestrator] Image failed:", e);
+        return null;
+      }),
+      createVideoTask(videoPrompt).catch((e) => {
+        console.error("[orchestrator] Video task failed:", e);
+        return null;
+      }),
+    ]);
+
     let captions: any;
     try {
-      captions = safeParseJSON(captionsRaw);
+      captions = safeParseJSON(captionsRaw as string);
     } catch {
       captions = {
         english: `Come try our amazing ${brief.dish}! 🔥 Only ${brief.price}!`,
@@ -197,50 +184,93 @@ Write promotional captions in 4 languages for Instagram/TikTok using the best ca
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // AGENT 5 — Art Director (image generation)
+    // STEP 2.5: Poster Composer Agent (Agnes text — poster layout data)
     // ═══════════════════════════════════════════════════════════════════════════
-    let posterUrl: string | null = null;
+    let poster: any = null;
     try {
-      posterUrl = await generateImage(imagePrompt);
-    } catch (e) {
-      console.error("[orchestrator] Image generation failed:", e);
-    }
+      const posterComposerPrompt = `You are a professional advertising art director who designs high-converting marketing posters.
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // AGENT 6 — Quality Reviewer (uses Exa)
-    // ═══════════════════════════════════════════════════════════════════════════
-    const mainClaim = captions.english || `${brief.dish} at ${brief.price}`;
-    const factCheckData = await searchWeb(mainClaim);
-    if (factCheckData) sources.push(factCheckData);
+Business info from owner: "${input}"
+${profileContext}Brief: ${JSON.stringify({ dish: brief.dish, usp: brief.usp, price: brief.price, vibe: brief.vibe, audience: brief.audience })}
 
-    const reviewerPrompt = `You are a marketing quality reviewer. Check this social media caption for accuracy:
-Caption: "${mainClaim}"
-${factCheckData ? `Web verification data:\n${factCheckData}\n` : "No web data available for verification."}
-Return ONLY valid JSON:
+Design a poster layout. Return ONLY valid JSON (no markdown):
 {
-  "score": <number 1-10>,
-  "feedback": "one-line feedback, flag any unverifiable claims"
-}`;
+  "headline": "short punchy attention grabber (max 6 words)",
+  "story": "1-2 sentence emotional storytelling line",
+  "items": [{ "name": "item name", "price": "$X" }],
+  "offer": "special offer or combo, or null",
+  "businessName": "business name from input",
+  "rating": "e.g. 4.8 ★ (320 reviews)",
+  "cta": "Order Now / Visit Today / Limited Offer",
+  "hours": "e.g. 10am - 9pm daily",
+  "contact": "phone or @handle or address",
+  "delivery": "e.g. GrabFood / foodpanda, or null"
+}
 
-    let review: any;
-    try {
-      const reviewRaw = await generateText(reviewerPrompt);
-      review = safeParseJSON(reviewRaw);
-    } catch {
-      review = { score: 7, feedback: "Could not fully verify all claims." };
+For "items" include 1-4 menu items with prices based on what the owner described. For fields not mentioned by the owner, use plausible placeholders. Label the rating as a sample if invented.`;
+
+      const posterRaw = await generateText(posterComposerPrompt, 600);
+      poster = safeParseJSON(posterRaw);
+    } catch (e) {
+      console.error("[orchestrator] Poster Composer failed:", e);
+      // Fallback poster data
+      poster = {
+        headline: `Try Our ${brief.dish}!`,
+        story: brief.usp || "Made with love, served with pride.",
+        items: [{ name: brief.dish, price: brief.price || "$5" }],
+        offer: null,
+        businessName: brief.dish,
+        rating: "4.7 ★ (sample)",
+        cta: "Visit Today",
+        hours: "10am - 9pm daily",
+        contact: "See us in person",
+        delivery: null,
+      };
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // RESPONSE
+    // STEP 3: Quality Reviewer (quick, after we have captions)
+    // ═══════════════════════════════════════════════════════════════════════════
+    let review: any = { score: 7, feedback: "Looks good." };
+
+    if (!FAST_MODE) {
+      try {
+        const mainClaim = captions.english || `${brief.dish} at ${brief.price}`;
+        // Use trendData we already have for verification — no extra search
+        const reviewerPrompt = `You are a marketing quality reviewer. Rate this caption's accuracy (1-10) and flag unverifiable claims:
+Caption: "${mainClaim}"
+${trendData ? `Context:\n${trendData}\n` : ""}
+Return ONLY valid JSON: { "score": <1-10>, "feedback": "one-line feedback" }`;
+
+        const reviewRaw = await generateText(reviewerPrompt, 200);
+        review = safeParseJSON(reviewRaw);
+      } catch {
+        // keep default review
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MEMORY: Save this session's context for future visits (non-blocking)
+    // ═══════════════════════════════════════════════════════════════════════════
+    const memorySummary = `Business: ${brief.dish}. USP: ${brief.usp}. Price: ${brief.price}. Vibe: ${brief.vibe}. Audience: ${brief.audience}. Caption framework: ${captions.framework || "HVC"}. English caption: ${(captions.english || "").slice(0, 200)}. Generated poster and video.`;
+    saveBusinessMemory(memoryKey, memorySummary).catch(() => {}); // fire-and-forget
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RESPONSE — return immediately, client polls video separately
     // ═══════════════════════════════════════════════════════════════════════════
     return NextResponse.json({
       brief,
       captions,
-      posterUrl,
+      posterImageUrl,
+      poster,
       videoTaskId,
       review,
       sources,
       todayContext: todayContext || null,
+      returning: brief.returning || false,
+      welcomeBack: brief.welcomeBack || null,
+      whatsChanged: brief.whatsChanged || null,
+      contentPlan: brief.contentPlan || null,
     });
   } catch (e: any) {
     console.error("[orchestrator] Fatal error:", e);

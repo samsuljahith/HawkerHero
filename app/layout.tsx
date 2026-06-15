@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "HawkerHero — AI Marketing Studio",
+  title: "HawkerHero — AI Marketing Intelligence",
   description:
-    "Describe your business in one sentence. Get a full marketing kit: multilingual captions, promo poster, and video — powered by 5 AI agents with live web search.",
+    "AI-powered marketing intelligence platform for small businesses. Market analysis, content generation, and strategic recommendations.",
 };
 
 export default function RootLayout({

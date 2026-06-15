@@ -10,6 +10,8 @@ Run these commands in order from the project root (`HawkerHero/` directory).
 npm install
 ```
 
+This installs all dependencies including `html-to-image` (poster PNG export) and `mem0ai` (persistent memory).
+
 ---
 
 ## 2. Create your environment file
@@ -23,7 +25,12 @@ Then open `.env.local` and fill in your keys:
 ```
 AGNES_API_KEY=your_agnes_api_key_here
 EXA_API_KEY=your_exa_api_key_here
+MEM0_API_KEY=your_mem0_api_key_here
+FAST_MODE=false
 ```
+
+Set `FAST_MODE=true` to skip all Exa web searches (for fast testing without an Exa key).
+`MEM0_API_KEY` enables persistent memory — the app remembers returning businesses. Get a key from https://app.mem0.ai. Leave blank to disable memory (the app still works without it).
 
 ---
 
@@ -78,4 +85,6 @@ npm run dev
 - **Exa search returns empty** — The pipeline degrades gracefully. Captions/posters still generate without search data.
 - **Video takes a long time** — Video generation is async. The UI polls every 3s for ~90s. If it times out, the rest of the kit still works. The video may still be rendering server-side.
 - **Video not generating at all** — Check that the Agnes video API is responding. The `num_frames` is set to 49 (8×6+1) which is valid. Try a simpler prompt if the API rejects complex ones.
+- **Mem0 memory disabled** — If `MEM0_API_KEY` is not set, memory features (welcome back, profile persistence) are disabled but the app still works.
+- **Business profiles not saving** — Profiles are stored in Mem0. If Mem0 is unavailable, demo profiles still show but new ones won't persist across server restarts.
 - **Type errors on install** — Make sure you're on Node.js 18+ and npm 9+.
