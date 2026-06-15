@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { BusinessProfile } from "@/lib/profiles";
+import { useAnalysisStore } from "@/lib/analysisStore";
 import Card from "@/components/ui/Card";
 import Stat from "@/components/ui/Stat";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Skeleton from "@/components/ui/Skeleton";
 import AgentProgress from "@/components/ui/AgentProgress";
+import { useState, useEffect } from "react";
 
 const AGENT_STEPS = [
   { label: "Searching market trends", icon: "🧠" },
@@ -22,26 +23,36 @@ interface MarketAnalysisProps {
 }
 
 export default function MarketAnalysis({ profile }: MarketAnalysisProps) {
-  const [loading, setLoading] = useState(false);
+  const { getEntry, setAnalysis, setLoading, setError } = useAnalysisStore();
+  const entry = getEntry(profile.id);
   const [currentStep, setCurrentStep] = useState(0);
-  const [result, setResult] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const runAnalysis = async () => {
-    setLoading(true); setError(null); setResult(null); setCurrentStep(0);
-    const stepInterval = setInterval(() => setCurrentStep((s) => Math.min(s + 1, 4)), 3500);
+    setLoading(profile.id);
+    setCurrentStep(0);
+    const si = setInterval(() => setCurrentStep((s) => Math.min(s + 1, 4)), 3500);
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: `${profile.name}: ${profile.description}. We offer: ${profile.offerings}`, profile }),
+        body: JSON.stringify({
+          input: `${profile.name}: ${profile.description}. We offer: ${profile.offerings}`,
+          profile,
+        }),
       });
       const data = await res.json();
-      if (!res.ok) { setError(data.error); return; }
-      setResult(data);
-    } catch (e: any) { setError(e.message); }
-    finally { clearInterval(stepInterval); setCurrentStep(5); setLoading(false); }
+      if (!res.ok) { setError(profile.id, data.error || "Failed"); return; }
+      setAnalysis(profile.id, data);
+    } catch (e: any) {
+      setError(profile.id, e.message || "Network error");
+    } finally {
+      clearInterval(si);
+      setCurrentStep(5);
+    }
   };
+
+  const result = entry.analysis;
+  const isLoading = entry.status === "loading";
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -50,28 +61,27 @@ export default function MarketAnalysis({ profile }: MarketAnalysisProps) {
           <h2 className="text-2xl font-bold text-[#1A1410] tracking-tight">Market Analysis</h2>
           <p className="text-[#6B6B6B] text-sm mt-1">AI-powered insights for {profile.name}</p>
         </div>
-        <Button onClick={runAnalysis} disabled={loading}>
-          {loading ? "Analyzing…" : "🧠 Run Analysis"}
+        <Button onClick={runAnalysis} disabled={isLoading}>
+          {isLoading ? "Analyzing…" : result ? "🔄 Re-run Analysis" : "🧠 Run Analysis"}
         </Button>
       </div>
 
       {/* Agent Progress */}
-      {loading && (
+      {isLoading && (
         <Card>
           <h3 className="text-sm font-semibold mb-3 text-[#6B6B6B] uppercase tracking-wide">Agent Pipeline</h3>
           <AgentProgress steps={AGENT_STEPS} currentStep={currentStep} />
         </Card>
       )}
 
-      {/* Loading Skeletons */}
-      {loading && !result && (
+      {isLoading && !result && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[1,2,3,4].map(i => <Skeleton key={i} className="h-24 rounded-[14px]" />)}
+          {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-24 rounded-[14px]" />)}
         </div>
       )}
 
-      {error && (
-        <Card><p className="text-red-600 text-sm">⚠️ {error}</p></Card>
+      {entry.status === "error" && entry.error && (
+        <Card><p className="text-red-600 text-sm">⚠️ {entry.error}</p></Card>
       )}
 
       {/* Results */}
@@ -94,7 +104,7 @@ export default function MarketAnalysis({ profile }: MarketAnalysisProps) {
           {/* Key Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Stat label="Product" value={result.brief?.dish || "—"} icon="🍽️" />
-            <Stat label="USP" value={result.brief?.usp?.slice(0, 30) || "—"} icon="⭐" />
+            <Stat label="USP" value={(result.brief?.usp || "—").slice(0, 30)} icon="⭐" />
             <Stat label="Price" value={result.brief?.price || "—"} icon="💰" />
             <Stat label="Quality" value={`${result.review?.score || 0}/10`} icon="✅" trend="up" />
           </div>
@@ -114,8 +124,23 @@ export default function MarketAnalysis({ profile }: MarketAnalysisProps) {
             </div>
           </Card>
 
+          {/* Content Plan Preview */}
+          {result.contentPlan && result.contentPlan.length > 0 && (
+            <Card>
+              <h3 className="text-base font-semibold mb-3">📅 Content Plan ({result.contentPlan.length} ideas)</h3>
+              <div className="space-y-2">
+                {result.contentPlan.slice(0, 3).map((item: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between p-3 bg-[#FAF8F5] rounded-[10px]">
+                    <span className="text-sm font-medium text-[#1A1410]">{item.idea}</span>
+                    <Badge variant="info">{item.platform}</Badge>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
           {/* Sources */}
-          {result.sources?.length > 0 && (
+          {result.sources && result.sources.length > 0 && (
             <Card padding="sm">
               <div className="flex items-center gap-2 mb-2">
                 <Badge variant="info">🌐 Live Data</Badge>
@@ -131,11 +156,11 @@ export default function MarketAnalysis({ profile }: MarketAnalysisProps) {
         </div>
       )}
 
-      {!loading && !result && (
+      {!isLoading && !result && entry.status !== "error" && (
         <Card className="text-center py-16">
           <span className="text-4xl mb-3 block">🧠</span>
           <h3 className="text-lg font-semibold">Ready to analyze</h3>
-          <p className="text-sm text-[#6B6B6B] mt-1">Click &ldquo;Run Analysis&rdquo; to get AI-powered market insights for your business.</p>
+          <p className="text-sm text-[#6B6B6B] mt-1">Click &ldquo;Run Analysis&rdquo; to get AI-powered market insights.</p>
         </Card>
       )}
     </div>

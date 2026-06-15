@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { BusinessProfile } from "@/lib/profiles";
+import { useAnalysisStore } from "@/lib/analysisStore";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Badge from "@/components/ui/Badge";
@@ -30,16 +31,22 @@ interface ContentStudioProps {
 }
 
 export default function ContentStudio({ profile }: ContentStudioProps) {
-  const [input, setInput] = useState("");
+  const { getStudio, setStudio } = useAnalysisStore();
+  const studio = getStudio(profile.id);
+
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState(0);
-  const [result, setResult] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
   const [lang, setLang] = useState<LangKey>("english");
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoPolling, setVideoPolling] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(true);
   const [listening, setListening] = useState(false);
+
+  // Derived from store
+  const input = studio.input;
+  const result = studio.result;
+  const videoUrl = studio.videoUrl;
+  const wantPoster = studio.wantPoster;
+  const wantVideo = studio.wantVideo;
 
   useEffect(() => {
     setSpeechSupported(typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window));
@@ -51,7 +58,7 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
     if (!SR || listening) { setListening(false); return; }
     const r = new SR(); r.lang = "en-US"; r.interimResults = true; r.continuous = false;
     r.onstart = () => setListening(true);
-    r.onresult = (e: any) => { let t = ""; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setInput(t); };
+    r.onresult = (e: any) => { let t = ""; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setStudio(profile.id, { input: t }); };
     r.onerror = () => setListening(false);
     r.onend = () => setListening(false);
     r.start();
@@ -61,23 +68,44 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
     setVideoPolling(true); let a = 0;
     const poll = async () => {
       if (a >= 30) { setVideoPolling(false); return; } a++;
-      try { const r = await fetch(`/api/video-status?taskId=${taskId}`); const d = await r.json(); if (d.status === "completed" && d.videoUrl) { setVideoUrl(d.videoUrl); setVideoPolling(false); return; } if (d.status === "failed") { setVideoPolling(false); return; } } catch {}
+      try {
+        const r = await fetch(`/api/video-status?taskId=${taskId}`);
+        const d = await r.json();
+        if (d.status === "completed" && d.videoUrl) {
+          setStudio(profile.id, { videoUrl: d.videoUrl });
+          setVideoPolling(false); return;
+        }
+        if (d.status === "failed") { setVideoPolling(false); return; }
+      } catch {}
       setTimeout(poll, 3000);
     }; poll();
-  }, []);
+  }, [profile.id, setStudio]);
+
+  // Resume polling if we have a taskId but no videoUrl
+  useEffect(() => {
+    if (result?.videoTaskId && !videoUrl && !videoPolling) {
+      pollVideo(result.videoTaskId);
+    }
+  }, [result?.videoTaskId, videoUrl, videoPolling, pollVideo]);
 
   const handleGenerate = async () => {
     if (!input.trim()) return;
-    setLoading(true); setError(null); setResult(null); setVideoUrl(null); setVideoPolling(false); setStep(0);
+    setLoading(true); setStep(0);
+    setStudio(profile.id, { result: null, videoUrl: null });
     const si = setInterval(() => setStep(s => Math.min(s + 1, 4)), 4000);
     try {
-      const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: input.trim(), profile }) });
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: input.trim(), profile }),
+      });
       const data = await res.json();
-      if (!res.ok) { setError(data.error); return; }
-      setResult(data);
-      if (data.videoTaskId) pollVideo(data.videoTaskId);
-    } catch (e: any) { setError(e.message); }
-    finally { clearInterval(si); setStep(5); setLoading(false); }
+      if (!res.ok) { setStudio(profile.id, { result: { error: data.error } }); return; }
+      setStudio(profile.id, { result: data });
+      if (data.videoTaskId && wantVideo) pollVideo(data.videoTaskId);
+    } catch (e: any) {
+      setStudio(profile.id, { result: { error: e.message } });
+    } finally { clearInterval(si); setStep(5); setLoading(false); }
   };
 
   const copyText = (text: string) => { navigator.clipboard.writeText(text).catch(() => {}); };
@@ -92,7 +120,10 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
       {/* Input */}
       <Card>
         <div className="relative">
-          <textarea value={input} onChange={e => setInput(e.target.value)} rows={3}
+          <textarea
+            value={input}
+            onChange={e => setStudio(profile.id, { input: e.target.value })}
+            rows={3}
             placeholder={`What would you like to promote? e.g. "our new lunch set, $6.90, comes with drink"`}
             className="w-full bg-[#FAF8F5] border border-[#ECE6DF] rounded-[10px] px-4 py-3 pr-12 text-sm resize-none outline-none focus:border-[#F2541B] transition-colors placeholder:text-[#6B6B6B]/60"
           />
@@ -101,7 +132,30 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
           )}
         </div>
         {listening && <p className="text-xs text-red-500 mt-1 animate-pulse">Listening…</p>}
-        <div className="mt-3 flex gap-2">
+
+        {/* Toggles */}
+        <div className="mt-3 flex items-center gap-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={wantPoster}
+              onChange={e => setStudio(profile.id, { wantPoster: e.target.checked })}
+              className="w-4 h-4 rounded border-[#ECE6DF] text-[#F2541B] focus:ring-[#F2541B]"
+            />
+            <span className="text-sm text-[#1A1410] font-medium">🎨 Poster</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={wantVideo}
+              onChange={e => setStudio(profile.id, { wantVideo: e.target.checked })}
+              className="w-4 h-4 rounded border-[#ECE6DF] text-[#F2541B] focus:ring-[#F2541B]"
+            />
+            <span className="text-sm text-[#1A1410] font-medium">🎬 Video</span>
+          </label>
+        </div>
+
+        <div className="mt-3">
           <Button onClick={handleGenerate} disabled={loading || !input.trim()}>
             {loading ? "Generating…" : "✨ Generate"}
           </Button>
@@ -122,10 +176,10 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
         </div>
       )}
 
-      {error && <Card><p className="text-red-600 text-sm">⚠️ {error}</p></Card>}
+      {result?.error && <Card><p className="text-red-600 text-sm">⚠️ {result.error}</p></Card>}
 
       {/* Results */}
-      {result && (
+      {result && !result.error && (
         <div className="space-y-6 animate-slideUp">
           {/* Captions */}
           <Card>
@@ -140,10 +194,12 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
                   className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${lang === l.key ? "bg-white shadow-sm text-[#F2541B]" : "text-[#6B6B6B]"}`}>{l.label}</button>
               ))}
             </div>
-            <div className="relative p-4 bg-[#FAF8F5] rounded-[10px] border border-[#ECE6DF] min-h-[60px]">
-              <p className="text-sm text-[#1A1410] whitespace-pre-wrap pr-8">{result.captions?.[lang] || "—"}</p>
+            <div className="relative p-5 bg-[#FAF8F5] rounded-[10px] border border-[#ECE6DF] min-h-[120px]">
+              <p className="text-base text-[#1A1410] whitespace-pre-wrap leading-relaxed pr-10">
+                {result.captions?.[lang] || "—"}
+              </p>
               <button onClick={() => copyText(result.captions?.[lang] || "")} title="Copy"
-                className="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-md bg-white border border-[#ECE6DF] text-xs hover:border-[#F2541B] transition-colors">📋</button>
+                className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-md bg-white border border-[#ECE6DF] text-sm hover:border-[#F2541B] transition-colors">📋</button>
             </div>
             {result.captions?.hashtags && (
               <div className="mt-3 flex flex-wrap gap-1.5">
@@ -155,7 +211,7 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
           </Card>
 
           {/* Poster */}
-          {result.posterImageUrl && result.poster && (
+          {wantPoster && result.posterImageUrl && result.poster && (
             <Card>
               <h3 className="text-base font-semibold mb-1">🎨 Poster</h3>
               <p className="text-xs text-[#6B6B6B] mb-3">Download for Instagram feed (4:5). Best posted 11am–1pm or 7–9pm.</p>
@@ -164,22 +220,24 @@ export default function ContentStudio({ profile }: ContentStudioProps) {
           )}
 
           {/* Video */}
-          <Card>
-            <h3 className="text-base font-semibold mb-1">🎬 Video</h3>
-            <p className="text-xs text-[#6B6B6B] mb-3">Best for Reels / TikTok (9:16 vertical).</p>
-            {videoUrl ? (
-              <div className="max-w-[240px] mx-auto rounded-[14px] overflow-hidden border border-[#ECE6DF] aspect-[9/16]">
-                <video src={videoUrl} autoPlay muted loop playsInline className="w-full h-full object-cover" />
-              </div>
-            ) : videoPolling || result.videoTaskId ? (
-              <div className="flex items-center gap-3 p-4 rounded-[10px] bg-amber-50 border border-amber-200">
-                <div className="w-4 h-4 border-2 border-amber-400 border-t-amber-700 rounded-full animate-spin" />
-                <p className="text-amber-700 text-xs font-medium">Rendering video… (1-3 min)</p>
-              </div>
-            ) : (
-              <p className="text-xs text-[#6B6B6B]">Video not available for this request.</p>
-            )}
-          </Card>
+          {wantVideo && (
+            <Card>
+              <h3 className="text-base font-semibold mb-1">🎬 Video</h3>
+              <p className="text-xs text-[#6B6B6B] mb-3">Best for Reels / TikTok (9:16 vertical).</p>
+              {videoUrl ? (
+                <div className="max-w-[240px] mx-auto rounded-[14px] overflow-hidden border border-[#ECE6DF] aspect-[9/16]">
+                  <video src={videoUrl} autoPlay muted loop playsInline className="w-full h-full object-cover" />
+                </div>
+              ) : videoPolling || result.videoTaskId ? (
+                <div className="flex items-center gap-3 p-4 rounded-[10px] bg-amber-50 border border-amber-200">
+                  <div className="w-4 h-4 border-2 border-amber-400 border-t-amber-700 rounded-full animate-spin" />
+                  <p className="text-amber-700 text-xs font-medium">Rendering video… (1-3 min)</p>
+                </div>
+              ) : (
+                <p className="text-xs text-[#6B6B6B]">Video not available for this request.</p>
+              )}
+            </Card>
+          )}
 
           {/* Quality */}
           {result.review && (
